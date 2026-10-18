@@ -66,6 +66,28 @@ The merge and PR routes call the tracker over the network, so they vary most.
 The ticket gate runs inside `dispatch-bash.sh` for every Bash call.
 So the `dispatch-bash.sh` rows already include the ticket gate time on the Bash path.
 
+### Linux addendum (2026-10-18, samahali/apexyard#3)
+
+A Linux machine (kernel 6.8, bash, `gh` 2.102.0) hit the 20 second timeout on every merge.
+The merge route there calls `gh` 10 times in series.
+Each call took 0.9 to 1.9 seconds, because DNS lookup alone took 0.24 to 0.77 seconds.
+The table shows 5 runs of the merge route against one merged PR.
+The four merge gates ran directly with the payload, and the `gh` calls were real.
+The always-on part is the harness `git status --short` route on the same machine.
+
+| Part | n | Min | Max |
+|------|---|-----|-----|
+| Always-on gates (`git status --short`, p50 1190) | 5 | - | 1213 |
+| `block-unreviewed-merge.sh` | 5 | 3730 | 5203 |
+| `require-design-review-for-ui.sh` | 5 | 3709 | 4644 |
+| `block-merge-on-red-ci.sh` | 5 | 6919 | 8499 |
+| `require-architecture-review.sh` | 5 | 3881 | 4530 |
+| Four merge gates, total per run | 5 | 18642 | 22280 |
+| Merge route, worst run plus always-on p95 | 5 | - | 23493 |
+
+With n = 5, the p95 is the worst run: 23493 ms.
+This does not include Claude Code's own hook start time.
+
 ## Timeout rule and chosen values
 
 The rule is: timeout >= 5 x p95, and never under 10 seconds.
@@ -75,25 +97,27 @@ A timeout that is too short would block valid merges.
 
 | Entry | Slowest p95 | 5 x p95 | Floor | Chosen timeout |
 |-------|-------------|---------|-------|----------------|
-| `dispatch-bash.sh` (Bash matcher) | 2748 (`gh pr merge`) | 13740 | 10000 | 20 seconds |
+| `dispatch-bash.sh` (Bash matcher) | 23493 (merge route, Linux addendum) | 117465 | 10000 | 120 seconds |
 | `require-active-ticket.sh` (Edit, Write, MultiEdit matcher) | 207 | 1035 | 10000 | 10 seconds |
 
-The `dispatch-bash.sh` value is 20 seconds, above the 13.74 second minimum.
-The extra margin covers slow tracker responses on the merge and PR routes.
-A merge that waits longer than 20 seconds for the tracker fails closed.
+The `dispatch-bash.sh` value was 20 seconds, from the macOS p95 of 2748 ms.
+The Linux addendum p95 of 23493 ms is the slowest route recorded, so the rule now uses it.
+The `dispatch-bash.sh` value is 120 seconds, above the 117.47 second minimum.
+A merge that waits longer than 120 seconds for the tracker fails closed.
+A hung gate holds a call for up to 120 seconds before Claude Code blocks it.
 The operator can retry it.
 
 `.claude/hooks/tests/test_settings_fail_closed.sh` reads the lines below and
 checks the two timeouts in `.claude/settings.json` against them.
 
 ```text
-profile: dispatch-bash.sh p95_ms=2748
+profile: dispatch-bash.sh p95_ms=23493
 profile: require-active-ticket.sh p95_ms=207
 ```
 
 ## Limits of this profile
 
-- The numbers come from one macOS machine. A Linux CI runner has different timings.
+- The main table comes from one macOS machine. The Linux addendum comes from one Linux machine with n = 5.
 - The harness routes do not include Claude Code's own hook start time.
 - A sandbox without network access makes the tracker routes fail fast, not slow.
 - A hook speed-up is outside this profile. Issue #1613 tracks hook speed-ups.
