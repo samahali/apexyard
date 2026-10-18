@@ -83,4 +83,5 @@ workspace/*
 
 # Split-portfolio v2: registry + project docs live in the private sibling portfolio repo.
 apexyard.projects.yaml
-projects
+projects/*
+!projects/README.md
